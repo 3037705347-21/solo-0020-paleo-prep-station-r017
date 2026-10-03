@@ -23,16 +23,41 @@ func (s *Service) CreatePlan(
 		if !ok {
 			return notFoundSpecimen(specimenID)
 		}
+		replacesID := request.ReplacesPlanID
+		var predecessor *domain.PrepPlan
+		if replacesID != "" {
+			existing, found := m.GetPlan(replacesID)
+			if !found {
+				return contracts.NotFound("plan_not_found", "未找到被接替的修复方案 "+replacesID)
+			}
+			if existing.SpecimenID != specimenID {
+				return contracts.Conflict(
+					"replacement_plan_mismatch",
+					"被接替方案不属于当前标本",
+				)
+			}
+			if !existing.IsCancelled() {
+				return contracts.Conflict("plan_not_replaceable", "只有已取消方案可以被新方案接替")
+			}
+			if existing.SupersededByID != "" {
+				return contracts.Conflict("plan_already_superseded", "该方案已经存在接替方案")
+			}
+			predecessor = &existing
+		}
+		// The replacement target is validated first so repeat replacements fail
+		// with a deterministic code even while the first successor is still open.
 		if m.HasOpenPlan(specimenID) {
 			return contracts.Conflict("open_plan_exists", "该标本已存在未结束的修复方案")
 		}
+		successorID := s.nextID("plan")
 		plan, err := domain.NewPrepPlan(
-			s.nextID("plan"),
+			successorID,
 			specimen,
 			request.Objective,
 			request.Method,
 			request.Adhesive,
 			request.TargetExposure,
+			replacesID,
 			s.now(),
 		)
 		if err != nil {
@@ -40,6 +65,12 @@ func (s *Service) CreatePlan(
 		}
 		if err := specimen.MarkPlanned(s.now()); err != nil {
 			return err
+		}
+		if predecessor != nil {
+			if err := predecessor.MarkSupersededBy(successorID, s.now()); err != nil {
+				return err
+			}
+			m.PutPlan(*predecessor)
 		}
 		m.PutPlan(plan)
 		m.PutSpecimen(specimen)

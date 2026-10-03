@@ -25,9 +25,12 @@ type specimenView struct {
 }
 
 type planView struct {
-	ID         string `json:"id"`
-	SpecimenID string `json:"specimen_id"`
-	Status     string `json:"status"`
+	ID               string `json:"id"`
+	SpecimenID       string `json:"specimen_id"`
+	Status           string `json:"status"`
+	CancelledReason  string `json:"cancelled_reason"`
+	SupersedesPlanID string `json:"supersedes_plan_id"`
+	SupersededByID   string `json:"superseded_by_id"`
 }
 
 type planSnapshot struct {
@@ -136,6 +139,118 @@ func run(workflow string) error {
 		}
 		return nil
 
+	case "cancel-and-replace-plan":
+		specimen, err := registerSpecimen(client, server.URL)
+		if err != nil {
+			return err
+		}
+		plan, err := createPlan(client, server.URL, specimen.ID)
+		if err != nil {
+			return err
+		}
+		if err := requestJSON(
+			client,
+			http.MethodPost,
+			server.URL+"/plans/"+plan.ID+"/approval",
+			contracts.ApprovalRequest{ApprovedBy: "curator-lin"},
+			http.StatusOK,
+			&plan,
+		); err != nil {
+			return err
+		}
+		if err := cancelPlan(client, server.URL, plan.ID, "审批后确认酸蚀法不适用", http.StatusOK, &plan); err != nil {
+			return err
+		}
+		if plan.Status != "cancelled" || plan.CancelledReason != "审批后确认酸蚀法不适用" {
+			return fmt.Errorf("cancellation fact missing on plan: %+v", plan)
+		}
+		// Repeating the cancellation has a deterministic conflict result.
+		if err := cancelPlan(client, server.URL, plan.ID, "重复取消", http.StatusConflict, nil); err != nil {
+			return err
+		}
+		var fetchedSpecimen specimenView
+		if err := requestJSON(client, http.MethodGet, server.URL+"/specimens/"+specimen.ID, nil, http.StatusOK, &fetchedSpecimen); err != nil {
+			return err
+		}
+		if fetchedSpecimen.Status != "planned" {
+			return fmt.Errorf("expected specimen reopened to planned, got %s", fetchedSpecimen.Status)
+		}
+
+		var replacement planView
+		if err := requestJSON(
+			client,
+			http.MethodPost,
+			server.URL+"/specimens/"+specimen.ID+"/plans",
+			contracts.CreatePlanRequest{
+				Objective:      "暴露主要关节面",
+				Method:         "手工显微剥离",
+				TargetExposure: 80,
+				ReplacesPlanID: plan.ID,
+			},
+			http.StatusCreated,
+			&replacement,
+		); err != nil {
+			return err
+		}
+		if replacement.Status != "draft" || replacement.SupersedesPlanID != plan.ID {
+			return fmt.Errorf("replacement link not recorded: %+v", replacement)
+		}
+		var oldSnapshot planSnapshot
+		if err := requestJSON(client, http.MethodGet, server.URL+"/plans/"+plan.ID, nil, http.StatusOK, &oldSnapshot); err != nil {
+			return err
+		}
+		if oldSnapshot.Plan.SupersededByID != replacement.ID || oldSnapshot.Plan.Status != "cancelled" {
+			return fmt.Errorf("original plan must stay cancelled and point to successor: %+v", oldSnapshot.Plan)
+		}
+		// A second replacement attempt is rejected deterministically and leaves
+		// the single open replacement plan in place.
+		if err := requestJSON(
+			client,
+			http.MethodPost,
+			server.URL+"/specimens/"+specimen.ID+"/plans",
+			contracts.CreatePlanRequest{
+				Objective:      "再次调整目标",
+				Method:         "手工显微剥离",
+				TargetExposure: 60,
+				ReplacesPlanID: plan.ID,
+			},
+			http.StatusConflict,
+			nil,
+		); err != nil {
+			return err
+		}
+		if err := cancelPlan(client, server.URL, "plan-unknown", "取消未知方案", http.StatusNotFound, nil); err != nil {
+			return err
+		}
+		return nil
+
+	case "cancel-plan-with-progress-rejected":
+		specimen, plan, err := completedPlanSetup(client, server.URL)
+		if err != nil {
+			return err
+		}
+		if err := recordProgress(client, server.URL, plan.ID, 20, "矩阵剥离"); err != nil {
+			return err
+		}
+		if err := cancelPlan(client, server.URL, plan.ID, "开工后才发现方法不适用", http.StatusConflict, nil); err != nil {
+			return err
+		}
+		var snapshot planSnapshot
+		if err := requestJSON(client, http.MethodGet, server.URL+"/plans/"+plan.ID, nil, http.StatusOK, &snapshot); err != nil {
+			return err
+		}
+		if snapshot.Plan.Status != "active" || len(snapshot.Progress) != 1 {
+			return errors.New("plan with progress must remain active with its history intact")
+		}
+		var fetchedSpecimen specimenView
+		if err := requestJSON(client, http.MethodGet, server.URL+"/specimens/"+specimen.ID, nil, http.StatusOK, &fetchedSpecimen); err != nil {
+			return err
+		}
+		if fetchedSpecimen.Status != "preparing" {
+			return fmt.Errorf("specimen must stay preparing, got %s", fetchedSpecimen.Status)
+		}
+		return nil
+
 	case "release-for-study":
 		specimen, plan, err := completedPlanSetup(client, server.URL)
 		if err != nil {
@@ -233,6 +348,20 @@ func completedPlanSetup(client *http.Client, baseURL string) (specimenView, plan
 		return specimenView{}, planView{}, err
 	}
 	return specimen, approved, nil
+}
+
+func cancelPlan(client *http.Client, baseURL, planID, reason string, wantStatus int, target any) error {
+	return requestJSON(
+		client,
+		http.MethodPost,
+		baseURL+"/plans/"+planID+"/cancellation",
+		contracts.CancelPlanRequest{
+			Reason:      reason,
+			CancelledBy: "curator-lin",
+		},
+		wantStatus,
+		target,
+	)
 }
 
 func recordProgress(client *http.Client, baseURL, planID string, percent int, stage string) error {

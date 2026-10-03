@@ -7,7 +7,7 @@
 ## 目录
 
 - `cmd/paleo-prep-station`：HTTP 服务入口和监听参数。
-- `cmd/workflowcheck`：通过真实 HTTP 处理器执行四条业务链路的本地验证命令。
+- `cmd/workflowcheck`：通过真实 HTTP 处理器执行六条业务链路的本地验证命令。
 - `internal/httpapi`：路由、请求解码、状态码映射和 JSON 输出。
 - `internal/station`：跨领域对象的编排、事务边界和业务流程。
 - `internal/domain`：标本、方案、进度和放行记录的状态与不变量。
@@ -30,8 +30,11 @@ go run ./cmd/paleo-prep-station --addr 127.0.0.1:18133
 - `POST /specimens/{id}/plans`
 - `GET /plans/{id}`
 - `POST /plans/{id}/approval`
+- `POST /plans/{id}/cancellation`
 - `POST /plans/{id}/progress`
 - `POST /specimens/{id}/release`
+
+取消接口提交 `reason` 与 `cancelled_by`，只接受没有进度记录的草稿或已审批方案。创建方案时可携带可选的 `replaces_plan_id` 明确接替一份已取消方案，双向接替关系在同一事务内落定。
 
 ## 本地验证
 
@@ -42,6 +45,8 @@ go run ./cmd/workflowcheck --workflow register-specimen
 go run ./cmd/workflowcheck --workflow approve-prep-plan
 go run ./cmd/workflowcheck --workflow log-preparation
 go run ./cmd/workflowcheck --workflow release-for-study
+go run ./cmd/workflowcheck --workflow cancel-and-replace-plan
+go run ./cmd/workflowcheck --workflow cancel-plan-with-progress-rejected
 ```
 
 这些检查会启动临时 HTTP 处理器并调用真实公共路由。
@@ -52,4 +57,4 @@ go run ./cmd/workflowcheck --workflow release-for-study
 
 ## 测试边界
 
-本基线按要求暂不生成单元测试、测试夹具或端到端测试文件。后续任务阶段会补充红绿验证测试，届时再替换或扩展当前的生产级链路检查。
+取消与接替规则由 `internal/station` 下的单元测试覆盖，包括重复取消、已写进度拒绝、未知方案、跨标本接替、并发接替唯一性以及取消与进度竞争的确定性终态。

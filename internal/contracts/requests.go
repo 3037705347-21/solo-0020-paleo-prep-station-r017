@@ -13,10 +13,18 @@ type CreatePlanRequest struct {
 	Method         string `json:"method"`
 	Adhesive       string `json:"adhesive"`
 	TargetExposure int    `json:"target_exposure"`
+	// ReplacesPlanID optionally names a cancelled plan on the same specimen
+	// that this new plan formally succeeds.
+	ReplacesPlanID string `json:"replaces_plan_id"`
 }
 
 type ApprovalRequest struct {
 	ApprovedBy string `json:"approved_by"`
+}
+
+type CancelPlanRequest struct {
+	Reason      string `json:"reason"`
+	CancelledBy string `json:"cancelled_by"`
 }
 
 type ProgressRequest struct {

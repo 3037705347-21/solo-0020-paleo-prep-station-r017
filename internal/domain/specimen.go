@@ -109,6 +109,37 @@ func (s *Specimen) MarkPreparing(now time.Time) error {
 	return nil
 }
 
+// ReopenForPlanning moves a specimen back to planned when an approved plan is
+// cancelled before preparation began, so a replacement plan can be approved.
+func (s *Specimen) ReopenForPlanning(now time.Time) error {
+	if s.Status == SpecimenPlanned {
+		return nil
+	}
+	if s.Status != SpecimenPreparing {
+		return contracts.Conflict("specimen_not_reopenable", "只有制备中的标本可以回到已规划状态")
+	}
+	s.Status = SpecimenPlanned
+	s.Version++
+	s.UpdatedAt = now.UTC()
+	return nil
+}
+
+// RevertToRegistered undoes the planning mark created for a draft that is
+// cancelled without ever being approved, leaving the specimen as if no plan
+// had ever been opened against it.
+func (s *Specimen) RevertToRegistered(now time.Time) error {
+	if s.Status == SpecimenRegistered {
+		return nil
+	}
+	if s.Status != SpecimenPlanned {
+		return contracts.Conflict("specimen_not_revertible", "只有已规划标本可以回到登记状态")
+	}
+	s.Status = SpecimenRegistered
+	s.Version++
+	s.UpdatedAt = now.UTC()
+	return nil
+}
+
 func (s *Specimen) MarkStabilized(now time.Time) error {
 	if s.Status == SpecimenStabilized {
 		return nil
