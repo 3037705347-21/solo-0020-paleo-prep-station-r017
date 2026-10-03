@@ -144,8 +144,23 @@ func (m *Mutation) HasOpenPlan(specimenID string) bool {
 	return false
 }
 
+// OpenPlanOtherThan 返回该标本上除 excludedID 外仍开放的方案，
+// 用于接替事务在取消目标方案后确认不存在第二个开放方案。
+func (m *Mutation) OpenPlanOtherThan(specimenID, excludedID string) (domain.PrepPlan, bool) {
+	for _, value := range m.state.plans {
+		if value.SpecimenID == specimenID && value.IsOpen() && value.ID != excludedID {
+			return value, true
+		}
+	}
+	return domain.PrepPlan{}, false
+}
+
 func (m *Mutation) ProgressForPlan(planID string) []domain.ProgressEntry {
 	return append([]domain.ProgressEntry(nil), m.state.progress[planID]...)
+}
+
+func (m *Mutation) ProgressCountForPlan(planID string) int {
+	return len(m.state.progress[planID])
 }
 
 func (m *Mutation) AppendProgress(value domain.ProgressEntry) {

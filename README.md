@@ -27,11 +27,15 @@ go run ./cmd/paleo-prep-station --addr 127.0.0.1:18133
 
 - `GET /specimens` 与 `POST /specimens`
 - `GET /specimens/{id}`
-- `POST /specimens/{id}/plans`
+- `POST /specimens/{id}/plans`（可携带 `supersedes_plan_id`、`cancel_reason`、`cancelled_by` 原子接替原方案）
+- `GET /specimens/{id}/plans`
 - `GET /plans/{id}`
 - `POST /plans/{id}/approval`
+- `POST /plans/{id}/cancellation`（取消零进度的草稿或已审批方案，原因必填）
 - `POST /plans/{id}/progress`
 - `POST /specimens/{id}/release`
+
+未开始的草稿或已审批方案若发现方法不适用，可带原因取消后重新规划，原方案与取消事实永久保留；新方案也可以在创建时直接接替原方案。已经写入进度的方案不能取消或被接替。
 
 ## 本地验证
 
@@ -42,6 +46,10 @@ go run ./cmd/workflowcheck --workflow register-specimen
 go run ./cmd/workflowcheck --workflow approve-prep-plan
 go run ./cmd/workflowcheck --workflow log-preparation
 go run ./cmd/workflowcheck --workflow release-for-study
+go run ./cmd/workflowcheck --workflow cancel-unstarted-plan
+go run ./cmd/workflowcheck --workflow supersede-plan
+go run ./cmd/workflowcheck --workflow cannot-cancel-with-progress
+go run ./cmd/workflowcheck --workflow cancel-unknown-plan
 ```
 
 这些检查会启动临时 HTTP 处理器并调用真实公共路由。

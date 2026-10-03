@@ -109,6 +109,21 @@ func (s *Specimen) MarkPreparing(now time.Time) error {
 	return nil
 }
 
+// ReopenForPlanning 用于未开始方案取消后重新规划：
+// 标本仅在尚未真正开始制备（preparing 来自已审批但零进度的方案）时退回 planned。
+func (s *Specimen) ReopenForPlanning(now time.Time) error {
+	if s.Status == SpecimenPlanned || s.Status == SpecimenRegistered {
+		return nil
+	}
+	if s.Status != SpecimenPreparing {
+		return contracts.Conflict("specimen_preparation_started", "标本已经开始制备，不能退回重新规划")
+	}
+	s.Status = SpecimenPlanned
+	s.Version++
+	s.UpdatedAt = now.UTC()
+	return nil
+}
+
 func (s *Specimen) MarkStabilized(now time.Time) error {
 	if s.Status == SpecimenStabilized {
 		return nil
